@@ -1,0 +1,12 @@
+# pipeline output — regenerate with clean_submissions.py
+out/
+
+# never commit real survey responses; data/ holds synthetic samples only
+data/real_*
+data/*_export.csv
+data/submissions_*.csv
+
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
