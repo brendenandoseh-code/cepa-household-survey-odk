@@ -100,11 +100,15 @@ All 12 test assertions pass.
 
 ## Honest limits
 
-- **The form is compiled but not deployed.** pyxform's conversion succeeds, which means the
+- **Deployed, with test submissions only.** Compiled with pyxform and deployed on KoboToolbox (2026-08-07),
+  with test submissions collected through the live web form. **No real programme data has been
+  collected through this deployment and none will be published here.** Still true of the toolchain:
+  pyxform's conversion succeeds, which means the
   XLSForm parses, every `${...}` reference resolves, and the constraint and relevant expressions
-  are valid XPath. The stricter ODK Validate pass needs a Java runtime I did not have available,
-  and I have not yet pushed the form to an ODK Central server or collected a real submission
-  through it. Compiled and deployed are different claims and I am making the first one.
+  are valid XPath. The stricter ODK Validate pass needs a Java runtime I did not have available.
+  Before deploying I checked the three pieces of logic by hand in the live preview: declining
+  consent hides every downstream group, entering a household size of 3 and then 5 single parents
+  raises the constraint message, and ticking "Other" reveals its follow-up field.
 - **No real survey data is published here, and none will be.** The 2024 responses are
   household-level records including HIV status in a named village of roughly sixteen surveyed
   households. Aggregate figures are safe to publish and appear above; the row-level table is not,
