@@ -11,7 +11,7 @@ should have gone with it.
 | `build_xlsform.py` | Source of truth for the form. Generates the XLSForm workbook. |
 | `cepa_household_survey.xlsx` | The XLSForm itself — `survey`, `choices`, `settings` sheets. |
 | `cepa_household_survey.xml` | The compiled ODK form, produced by pyxform. |
-| `clean_submissions.py` | Reads an ODK Central CSV export, validates it, and produces analysis-ready output. |
+| `clean_submissions.py` | Reads an ODK Central or KoboToolbox CSV export, validates it, and produces analysis-ready output. |
 | `test_clean_submissions.py` | Tests asserting numerical behaviour of the cleaner. |
 | `data/sample_submissions.csv` | **Synthetic** submissions used to demonstrate the pipeline. |
 
@@ -58,7 +58,8 @@ Design decisions worth pointing at:
 
 ## The cleaning pipeline
 
-ODK Central exports one row per submission, and two things need handling before analysis:
+ODK Central and KoboToolbox each export one row per submission, and three things need handling
+before analysis:
 
 1. `select_multiple` answers arrive space-delimited in one column (`"farming livestock other"`),
    which is unusable in a groupby. They expand to one 0/1 indicator per choice. The tests check
@@ -69,6 +70,21 @@ ODK Central exports one row per submission, and two things need handling before 
    and the summary reports how many households were excluded and why. This is the same handling
    I gave CMS-suppressed values in my hospital-readmissions project, for the same reason: a
    placeholder that gets averaged is worse than a gap that gets declared.
+3. **KoboToolbox and ODK Central do not export the same shape.** Kobo ships every
+   `select_multiple` twice: once as the space-delimited answer, and again pre-expanded into one
+   column per choice (`strengths/livestock`). Stripping the group prefix collapses those onto
+   each other — `income_source/livestock` and `strengths/livestock` both become `livestock`, and
+   so do `piece_jobs`, `petty_trade`, `domestic_work` and `other`. The loader drops the
+   pre-expanded columns and recomputes the indicators from the answer itself, then refuses to
+   continue if any name collision survives.
+
+   I found this the first time I ran a real export through the pipeline rather than my own
+   fixtures. It had not failed loudly: every number it produced was correct, because none of my
+   test submissions happened to select a colliding option. It was writing an output file with
+   five duplicated column headings and would have gone on doing so. The fixtures could not have
+   caught it — I had written them in ODK Central's shape, which has no pre-expanded columns, so
+   they encoded the same assumption as the code they were testing. A test written from the same
+   misunderstanding as the code confirms the misunderstanding.
 
 The form already enforces the range and cross-field rules on device. `clean_submissions.py`
 re-checks them anyway, because forms get revised mid-collection and paper backfill entered later
@@ -96,7 +112,7 @@ validation problems   : 2
   ! row 11: challenges records 'none' alongside a specific challenge
 ```
 
-All 12 test assertions pass.
+All 19 test assertions pass.
 
 ## Honest limits
 
@@ -109,6 +125,14 @@ All 12 test assertions pass.
   Before deploying I checked the three pieces of logic by hand in the live preview: declining
   consent hides every downstream group, entering a household size of 3 and then 5 single parents
   raises the constraint message, and ticking "Other" reveals its follow-up field.
+- **The pipeline has been run against a live KoboToolbox export, but only a small one.** On
+  2026-09-01 I exported the test submissions from the live deployment and ran them through
+  `clean_submissions.py`. That is what surfaced the column-collision problem described above. Two
+  caveats on how much that proves: the export was two submissions, and they were duplicates of one
+  another because the first was re-posted from Enketo's queue. Both left the HIV question blank, so
+  the declined path is now exercised against real platform output while the ordinary path — a
+  household that answers — has still only ever been exercised against fixtures. The export itself
+  is not committed; `.gitignore` blocks it.
 - **No real survey data is published here, and none will be.** The 2024 responses are
   household-level records including HIV status in a named village of roughly sixteen surveyed
   households. Aggregate figures are safe to publish and appear above; the row-level table is not,

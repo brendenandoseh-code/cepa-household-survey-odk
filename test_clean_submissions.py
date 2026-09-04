@@ -109,6 +109,84 @@ def test_at_least_one_semantics():
     return check("3 single parents in 1 household counts as 1 household", int(row["count"]), 1)
 
 
+# KoboToolbox exports the same survey in a different shape from ODK Central: every
+# select_multiple arrives both as the space-delimited source column AND pre-expanded into
+# one column per choice. The leaf names of those pre-expanded columns collide across
+# questions - livestock, piece_jobs, petty_trade, domestic_work and other each appear under
+# more than one question - which is what these three tests pin down. The collision was found
+# by running a real Kobo export through the pipeline; the fixtures above are ODK Central's
+# shape and could never have surfaced it.
+KOBO_HEADER = (
+    "consent,household_size,single_parents,people_over_65,people_with_hiv,"
+    "income_source,income_source/piece_jobs,income_source/livestock,"
+    "strengths,strengths/farming,strengths/livestock,strengths/piece_jobs,"
+    "challenges,challenges/food_insecurity,"
+    "opportunities,opportunities/electricity,"
+    "_id,_uuid,meta/rootUuid\n"
+)
+
+# strengths says "farming" only, but the pre-expanded strengths/livestock column claims 1.
+# They disagree deliberately, so the tests can prove which one the pipeline believes.
+KOBO_ROW = (
+    "yes,4,1,1,,"
+    "piece_jobs,1,0,"
+    "farming,1,1,0,"
+    "food_insecurity,1,"
+    "electricity,1,"
+    "17,abc-123,abc-123\n"
+)
+
+
+def test_kobo_pre_expanded_columns_are_dropped():
+    """A Kobo export must load without two columns sharing a name.
+
+    Seven pre-expanded columns are present. All seven are dropped, and nothing that
+    survives is duplicated.
+    """
+    df = cs.load(io.StringIO(KOBO_HEADER + KOBO_ROW))
+    names = list(df.columns)
+    dupes = sorted({c for c in names if names.count(c) > 1})
+    f = check("no duplicate columns survive a Kobo export", dupes, [])
+    f += check("pre-expanded columns dropped", df.attrs["pre_expanded_dropped"], 7)
+    f += check("source column kept", "strengths" in names, True)
+    return f
+
+
+def test_source_column_wins_over_pre_expanded():
+    """The space-delimited answer is authoritative, not the platform's expansion.
+
+    The fixture's strengths/livestock column says 1 while the strengths answer itself
+    lists only farming. The indicator must follow the answer, so livestock is 0.
+    """
+    df = cs.load(io.StringIO(KOBO_HEADER + KOBO_ROW))
+    df, _ = cs.drop_non_consenting(df)
+    df = cs.coerce_numeric(df)
+    df = cs.expand_multiselect(df)
+    s = cs.summarize(df)
+
+    livestock = s[s["indicator"].str.contains("livestock as a strength")].iloc[0]
+    farming = s[s["indicator"].str.contains("farming as a strength")].iloc[0]
+    f = check("contradictory pre-expanded value ignored", int(livestock["count"]), 0)
+    f += check("source column drives the indicator", int(farming["count"]), 1)
+    return f
+
+
+def test_genuine_column_collision_raises():
+    """Two real groups sharing a leaf name must fail loudly, not silently overwrite.
+
+    This is not the Kobo case - these are ordinary grouped fields - so dropping is wrong
+    and guessing is worse. The loader should refuse.
+    """
+    header = "consent,household_size,visit/notes,followup/notes\n"
+    row = "yes,4,first,second\n"
+    try:
+        cs.load(io.StringIO(header + row))
+    except ValueError as e:
+        return check("collision names the offending column", "notes" in str(e), True)
+    print("FAIL genuine collision was not raised")
+    return 1
+
+
 def main():
     tests = [
         test_declined_hiv_is_not_zero,
@@ -118,6 +196,9 @@ def main():
         test_mutually_exclusive_none_is_caught,
         test_clean_data_produces_no_problems,
         test_at_least_one_semantics,
+        test_kobo_pre_expanded_columns_are_dropped,
+        test_source_column_wins_over_pre_expanded,
+        test_genuine_column_collision_raises,
     ]
     failures = 0
     for t in tests:

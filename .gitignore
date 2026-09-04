@@ -1,9 +1,12 @@
 # pipeline output — regenerate with clean_submissions.py
 out/
+out_*/
 
 # never commit real survey responses; data/ holds synthetic samples only
 data/real_*
 data/*_export.csv
+data/*_export.xlsx
+data/*.export.*
 data/submissions_*.csv
 
 __pycache__/

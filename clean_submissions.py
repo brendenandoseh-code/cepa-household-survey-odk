@@ -44,8 +44,46 @@ COUNT_COLS = ["single_parents", "people_over_65", "people_with_hiv"]
 
 
 def load(path: str | Path) -> pd.DataFrame:
+    """Read an ODK Central or KoboToolbox CSV export into a frame with flat column names.
+
+    Two export shapes have to be reconciled. ODK Central prefixes grouped fields with their
+    group path (`composition/household_size`), which is stripped here. KoboToolbox does that
+    too, but additionally ships every `select_multiple` pre-expanded into one column per
+    choice (`strengths/livestock`). Those pre-expanded columns are dropped rather than kept:
+    `expand_multiselect` recomputes the same indicators from the space-delimited source
+    column, that is the path the tests cover, and keeping both would leave the output with
+    two competing versions of the same fact.
+
+    Dropping them also removes a collision. `income_source/livestock` and
+    `strengths/livestock` both reduce to `livestock` once the prefix is stripped, as do
+    piece_jobs, petty_trade, domestic_work and other. Found the first time a real Kobo
+    export was run through the pipeline; the fixtures could not surface it because they
+    were written in ODK Central's shape only, which has no pre-expanded columns.
+
+    Raises ValueError if any collision survives, rather than letting one column silently
+    win over another.
+    """
     df = pd.read_csv(path, dtype=str, keep_default_na=False, na_values=[""])
-    df.columns = [c.split("/")[-1] for c in df.columns]  # ODK prefixes grouped fields
+
+    pre_expanded = {f"{col}/{choice}"
+                    for col, choices in MULTISELECT.items()
+                    for choice in choices}
+    dropped = [c for c in df.columns if c in pre_expanded]
+    df = df.drop(columns=dropped)
+
+    df.columns = [c.split("/")[-1] for c in df.columns]
+
+    names = list(df.columns)
+    collisions = sorted({c for c in names if names.count(c) > 1})
+    if collisions:
+        raise ValueError(
+            "column names collide after stripping group prefixes: "
+            + ", ".join(collisions)
+            + ". Two exported fields share a leaf name, so one would silently overwrite "
+              "the other. Widen the prefix handling instead of guessing which is wanted."
+        )
+
+    df.attrs["pre_expanded_dropped"] = len(dropped)
     return df
 
 
@@ -158,6 +196,9 @@ def main(argv=None) -> int:
     problems = validate(df)
 
     print(f"submissions read      : {len(raw)}")
+    if raw.attrs.get("pre_expanded_dropped"):
+        print(f"pre-expanded dropped  : {raw.attrs['pre_expanded_dropped']} "
+              f"(Kobo select_multiple columns; recomputed from the source column below)")
     print(f"non-consenting dropped: {declined}")
     print(f"analysable households : {len(df)}")
     print(f"validation problems   : {len(problems)}")
